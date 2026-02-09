@@ -1,0 +1,76 @@
+[project]
+name = "seedling"
+version = "0.1.0"
+description = "Local Job Scout & Resume Tailor - Find good jobs, skip the garbage."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [
+    { name = "Autumn Brown", email = "autumn@grove.place" }
+]
+keywords = [
+    "job-search",
+    "automation",
+    "resume",
+    "career",
+    "ai",
+    "scraper",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business :: Scheduling",
+]
+
+dependencies = [
+    "feedparser>=6.0.0",           # RSS parsing
+    "httpx[http2]>=0.27.0",        # Async HTTP client
+    "openai>=1.0.0",               # OpenRouter uses OpenAI-compatible API
+    "boto3>=1.35.0",               # R2 upload (S3-compatible)
+    "playwright>=1.48.0",          # HTML → PDF rendering + backup scraping
+    "beautifulsoup4>=4.12.0",      # HTML parsing fallback
+    "jinja2>=3.1.0",               # HTML template rendering
+    "tomli>=2.0.0",                # TOML config parsing
+    "python-dateutil>=2.8.0",      # Date parsing
+]
+
+[project.scripts]
+seedling = "seedling.main:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.0.0",
+    "ruff>=0.3.0",
+    "mypy>=1.8.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+select = ["E", "F", "I", "N", "W", "UP", "C90", "SIM"]
+ignore = []
+
+[tool.ruff.per-file-ignores]
+"__init__.py" = ["F401", "E402"]
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true

@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Seedling Job Digest</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            font-size: 16px;
+            line-height: 1.6;
+            color: #333;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .header {
+            background: linear-gradient(135deg, #2d5a27 0%, #4a8c3f 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        .header h1 {
+            font-size: 28px;
+            margin-bottom: 8px;
+        }
+        .header p {
+            opacity: 0.9;
+            font-size: 14px;
+        }
+        .content {
+            padding: 30px;
+        }
+        .greeting {
+            font-size: 18px;
+            margin-bottom: 20px;
+            color: #2c3e50;
+        }
+        .section {
+            margin-bottom: 30px;
+        }
+        .section-title {
+            font-size: 14px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #2d5a27;
+            margin-bottom: 15px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid #e8f5e9;
+        }
+        .job-card {
+            background: #fafafa;
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 12px;
+            border-left: 4px solid #4a8c3f;
+        }
+        .job-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 8px;
+        }
+        .job-title {
+            font-weight: 700;
+            color: #2c3e50;
+            font-size: 16px;
+        }
+        .job-score {
+            background: #2d5a27;
+            color: white;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .job-meta {
+            font-size: 13px;
+            color: #666;
+            margin-bottom: 8px;
+        }
+        .job-summary {
+            font-size: 14px;
+            color: #555;
+            font-style: italic;
+            margin-bottom: 12px;
+        }
+        .job-actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .btn {
+            display: inline-block;
+            padding: 8px 16px;
+            border-radius: 6px;
+            text-decoration: none;
+            font-size: 13px;
+            font-weight: 600;
+            transition: opacity 0.2s;
+        }
+        .btn:hover {
+            opacity: 0.9;
+        }
+        .btn-apply {
+            background: #2d5a27;
+            color: white;
+        }
+        .btn-resume {
+            background: #4a8c3f;
+            color: white;
+        }
+        .btn-cover {
+            background: #6fa863;
+            color: white;
+        }
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 15px;
+            margin-bottom: 25px;
+        }
+        .stat {
+            text-align: center;
+            padding: 15px;
+            background: #f5f5f5;
+            border-radius: 8px;
+        }
+        .stat-value {
+            font-size: 24px;
+            font-weight: 700;
+            color: #2d5a27;
+        }
+        .stat-label {
+            font-size: 11px;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .rejected {
+            background: #fff3e0;
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 20px;
+            font-size: 13px;
+            color: #e65100;
+        }
+        .footer {
+            text-align: center;
+            padding: 20px;
+            font-size: 12px;
+            color: #888;
+            border-top: 1px solid #eee;
+        }
+        .footer a {
+            color: #4a8c3f;
+        }
+        @media (max-width: 480px) {
+            .stats {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            .job-actions {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🌱 Seedling</h1>
+            <p>{{ date }} • {{ total_jobs }} opportunities found</p>
+        </div>
+
+        <div class="content">
+            <p class="greeting">Your garden grew {{ total_jobs }} new opportunities today 🌱</p>
+
+            {% if stats.total_rejected > 0 %}
+            <div class="rejected">
+                <strong>Filtered out {{ stats.total_rejected }} listings:</strong> {{ rejected_summary }}
+            </div>
+            {% endif %}
+
+            {% if tech_jobs %}
+            <div class="section">
+                <h2 class="section-title">Top Tech Matches</h2>
+                {% for job in tech_jobs %}
+                <div class="job-card">
+                    <div class="job-header">
+                        <span class="job-title">{{ job.title }}</span>
+                        <span class="job-score">{{ job.match_score }}/100</span>
+                    </div>
+                    <div class="job-meta">
+                        {% if job.company %}{{ job.company }}{% endif %}
+                        {% if job.location %} • {{ job.location }}{% endif %}
+                    </div>
+                    <p class="job-summary">{{ job.score_summary }}</p>
+                    <div class="job-actions">
+                        <a href="{{ job.url }}" class="btn btn-apply">Apply →</a>
+                        {% if job.resume_url %}
+                        <a href="{{ job.resume_url }}" class="btn btn-resume">Resume</a>
+                        {% endif %}
+                        {% if job.cover_letter_url %}
+                        <a href="{{ job.cover_letter_url }}" class="btn btn-cover">Cover Letter</a>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            {% if serving_jobs %}
+            <div class="section">
+                <h2 class="section-title">Serving Positions</h2>
+                {% for job in serving_jobs %}
+                <div class="job-card">
+                    <div class="job-header">
+                        <span class="job-title">{{ job.title }}</span>
+                        <span class="job-score">{{ job.match_score }}/100</span>
+                    </div>
+                    <div class="job-meta">
+                        {% if job.company %}{{ job.company }}{% endif %}
+                        {% if job.location %} • {{ job.location }}{% endif %}
+                    </div>
+                    <p class="job-summary">{{ job.score_summary }}</p>
+                    <div class="job-actions">
+                        <a href="{{ job.url }}" class="btn btn-apply">Apply →</a>
+                        {% if job.resume_url %}
+                        <a href="{{ job.resume_url }}" class="btn btn-resume">Resume</a>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            <div class="section">
+                <h2 class="section-title">Today's Stats</h2>
+                <div class="stats">
+                    <div class="stat">
+                        <div class="stat-value">{{ stats.total_discovered }}</div>
+                        <div class="stat-label">Discovered</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-value">{{ stats.total_extracted }}</div>
+                        <div class="stat-label">Extracted</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-value">{{ stats.total_rejected }}</div>
+                        <div class="stat-label">Rejected</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-value">{{ stats.total_qualified }}</div>
+                        <div class="stat-label">Qualified</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="footer">
+            <p>Seedling runs daily at 7 AM ET • <a href="#">Settings</a> • <a href="#">Unsubscribe</a></p>
+        </div>
+    </div>
+</body>
+</html>

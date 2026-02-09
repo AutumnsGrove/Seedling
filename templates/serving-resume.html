@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Autumn Brown - Serving Resume</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            font-size: 11pt;
+            line-height: 1.5;
+            color: #333;
+            max-width: 8.5in;
+            margin: 0 auto;
+            padding: 0.5in;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 1.5em;
+            padding-bottom: 1em;
+            border-bottom: 2px solid #2c3e50;
+        }
+        .name {
+            font-size: 18pt;
+            font-weight: 700;
+            color: #2c3e50;
+            margin-bottom: 0.25em;
+        }
+        .contact {
+            font-size: 10pt;
+            color: #666;
+        }
+        .contact span {
+            margin: 0 0.5em;
+        }
+        .section {
+            margin-bottom: 1em;
+        }
+        .section-title {
+            font-size: 12pt;
+            font-weight: 700;
+            color: #2c3e50;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 0.75em;
+            padding-bottom: 0.25em;
+            border-bottom: 1px solid #ddd;
+        }
+        .summary {
+            font-size: 11pt;
+            line-height: 1.6;
+            color: #444;
+            margin-bottom: 1em;
+        }
+        .skills-list {
+            color: #555;
+            line-height: 1.8;
+        }
+        .job {
+            margin-bottom: 1em;
+        }
+        .job-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            margin-bottom: 0.25em;
+        }
+        .job-title {
+            font-weight: 600;
+            color: #2c3e50;
+        }
+        .job-company {
+            font-style: italic;
+            color: #555;
+        }
+        .job-dates {
+            color: #666;
+            font-size: 10pt;
+        }
+        .bullets {
+            list-style-type: disc;
+            padding-left: 1.25em;
+            color: #444;
+        }
+        .bullets li {
+            margin-bottom: 0.25em;
+        }
+        .certifications {
+            font-size: 10pt;
+            color: #2c3e50;
+            font-weight: 600;
+        }
+        @media print {
+            body {
+                padding: 0;
+                font-size: 10pt;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <h1 class="name">Autumn Brown</h1>
+        <div class="contact">
+            <span>Atlanta, GA</span>
+            <span>•</span>
+            <span>Open Availability</span>
+            <span>•</span>
+            <span>Immediate Start</span>
+        </div>
+    </header>
+
+    {% if summary %}
+    <section class="section">
+        <h2 class="section-title">Professional Summary</h2>
+        <p class="summary">{{ summary }}</p>
+    </section>
+    {% endif %}
+
+    {% if skills %}
+    <section class="section">
+        <h2 class="section-title">Qualifications</h2>
+        <p class="skills-list">{{ skills|join(" • ") }}</p>
+    </section>
+    {% endif %}
+
+    {% if experience %}
+    <section class="section">
+        <h2 class="section-title">Experience</h2>
+        {% for job in experience %}
+        <div class="job">
+            <div class="job-header">
+                <span class="job-title">{{ job.title }}</span>
+                <span class="job-dates">{{ job.dates }}</span>
+            </div>
+            <div class="job-company">{{ job.company }}</div>
+            <ul class="bullets">
+                {% for bullet in job.bullets %}
+                <li>{{ bullet }}</li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endfor %}
+    </section>
+    {% endif %}
+
+    <section class="section">
+        <h2 class="section-title">Certifications</h2>
+        <p class="certifications">Georgia Food Handler's Permit</p>
+    </section>
+</body>
+</html>
