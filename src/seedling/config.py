@@ -19,6 +19,7 @@ class Secrets(TypedDict):
     OPENROUTER_API_KEY: str
     EXA_API_KEY: str
     TAVILY_API_KEY: str
+    JSEARCH_API_KEY: str
     R2_ACCOUNT_ID: str
     R2_ACCESS_KEY_ID: str
     R2_SECRET_ACCESS_KEY: str
@@ -95,6 +96,7 @@ class Config:
         # Validate required keys
         required_keys = [
             "OPENROUTER_API_KEY",
+            "JSEARCH_API_KEY",
             "R2_ACCOUNT_ID",
             "R2_ACCESS_KEY_ID",
             "R2_SECRET_ACCESS_KEY",
@@ -110,6 +112,7 @@ class Config:
 
         self._secrets = Secrets(
             OPENROUTER_API_KEY=secrets["OPENROUTER_API_KEY"],
+            JSEARCH_API_KEY=secrets["JSEARCH_API_KEY"],
             EXA_API_KEY=secrets.get("EXA_API_KEY", ""),
             TAVILY_API_KEY=secrets.get("TAVILY_API_KEY", ""),
             R2_ACCOUNT_ID=secrets["R2_ACCOUNT_ID"],

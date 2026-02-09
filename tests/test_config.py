@@ -21,6 +21,7 @@ class TestConfig:
         ) as f:
             secrets = {
                 "OPENROUTER_API_KEY": "test-key-123",
+                "JSEARCH_API_KEY": "jsearch-key-999",
                 "EXA_API_KEY": "exa-key-456",
                 "TAVILY_API_KEY": "tavily-key-789",
                 "R2_ACCOUNT_ID": "test-account",
@@ -92,6 +93,7 @@ class TestConfig:
         ) as f:
             secrets = {
                 "OPENROUTER_API_KEY": "test-key-123",
+                "JSEARCH_API_KEY": "jsearch-key",
                 "R2_ACCOUNT_ID": "test-account",
                 "R2_ACCESS_KEY_ID": "r2-access-key",
                 "R2_SECRET_ACCESS_KEY": "r2-secret-key",
@@ -132,16 +134,18 @@ class TestSecretsTypedDict:
         """Test that Secrets has correct type annotations."""
         secrets: Secrets = {
             "OPENROUTER_API_KEY": "key1",
+            "JSEARCH_API_KEY": "jsearch-key",
             "EXA_API_KEY": "key2",
             "TAVILY_API_KEY": "key3",
             "R2_ACCOUNT_ID": "account",
             "R2_ACCESS_KEY_ID": "access",
             "R2_SECRET_ACCESS_KEY": "secret",
             "R2_BUCKET": "bucket",
+            "R2_WORKER_URL": "https://test.com",
             "ZEPHYR_URL": "https://test.com",
             "ZEPHYR_API_KEY": "zephyr",
             "SEEDLING_EMAIL": "test@example.com",
         }
 
         assert secrets["OPENROUTER_API_KEY"] == "key1"
-        assert len(secrets) == 10
+        assert len(secrets) == 12

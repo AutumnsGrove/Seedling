@@ -23,6 +23,10 @@ from seedling.discovery.web_search import (
     WebSearchDiscovery,
     crawl_jobs,
 )
+from seedling.discovery.jsearch import (
+    JSearchDiscovery,
+    discover_jobs as discover_jobs_jsearch,
+)
 from seedling.extraction.shutter import (
     ExtractedJob,
     extract_job_async,
@@ -128,18 +132,37 @@ async def run_pipeline(
         # Phase 1: Discovery (unless score_only or email_only)
         if not score_only and not email_only:
             print("\n📡 Phase 1: Discovery")
-            print("   (Discovering jobs via Tavily web search)")
 
             discovered_jobs: list[DiscoveredJob] = []
 
-            # Use Tavily for job search (primary)
-            if secrets.get("TAVILY_API_KEY"):
+            # Use JSearch API for job discovery (primary - no bot protection!)
+            jsearch_key = secrets.get("JSEARCH_API_KEY")
+            if jsearch_key:
+                print("   (Searching via JSearch API)")
+                async with JSearchDiscovery(api_key=jsearch_key) as search:
+                    async for result in search.discover_from_queries(remote_only=True):
+                        url_hash = generate_url_hash(result.url)
+                        existing = db.get_job_by_url_hash(url_hash)
+                        if existing is None:
+                            job = DiscoveredJob(
+                                platform=result.platform,
+                                url=result.url,
+                                title=result.title,
+                                company=result.company,
+                                location=result.location,
+                                description=result.description,
+                                published_at=result.posted_at or datetime.now().isoformat(),
+                            )
+                            discovered_jobs.append(job)
+                            stats["discovered"] += 1
+
+            # Fallback to Tavily if JSearch not configured
+            elif secrets.get("TAVILY_API_KEY"):
                 print("   (Searching via Tavily)")
                 async with WebSearchDiscovery(
                     tavily_api_key=secrets["TAVILY_API_KEY"],
                 ) as search:
                     async for result in search.discover_from_queries(provider="tavily"):
-                        # Check for duplicates
                         url_hash = generate_url_hash(result.url)
                         existing = db.get_job_by_url_hash(url_hash)
                         if existing is None:
@@ -178,8 +201,9 @@ async def run_pipeline(
                             stats["discovered"] += 1
 
             else:
-                print("   ⚠️ No Tavily or Exa API key configured")
-                print("   Set TAVILY_API_KEY in ~/.seedling/secrets.json")
+                print("   ⚠️ No JSearch API key configured")
+                print("   Set JSEARCH_API_KEY in secrets.json for bot-free discovery")
+                print("   Get a free key at: https://rapidapi.com/taq-najjar/api/jsearch")
 
             # Save discovered jobs to database
             for job in discovered_jobs:
@@ -202,72 +226,96 @@ async def run_pipeline(
         # Phase 2: Extraction (unless email_only)
         if not email_only:
             print("\n🔍 Phase 2: Extraction")
-            print("   (Extracting job details)")
+            print("   (Extracting job details - JSearch jobs have full details)")
 
             jobs_to_extract = db.get_jobs_by_status("discovered", limit=20)
 
             if not jobs_to_extract:
                 print("   (No jobs to extract)")
             else:
-                # Use Tavily for extraction if available (preferred)
-                if secrets.get("TAVILY_API_KEY"):
-                    print("   (Crawling via Tavily)")
-                    urls = [job.url for job in jobs_to_extract]
-                    crawled = await crawl_jobs(
-                        urls=urls,
-                        tavily_api_key=secrets["TAVILY_API_KEY"],
-                    )
-                    crawled_map = {c.url: c for c in crawled}
+                # Separate JSearch jobs (skip extraction) from others
+                jobs_needing_extraction = []
+                jsearch_count = 0
 
-                    for db_job in jobs_to_extract:
-                        if db_job.url in crawled_map:
-                            crawled = crawled_map[db_job.url]
-                            db_job.title = crawled.title or db_job.title
-                            db_job.description = crawled.content or db_job.description
-                            db_job.extracted_at = datetime.now().isoformat()
-                            db_job.status = "extracted"
-                            db.upsert_job(db_job)
+                for job in jobs_to_extract:
+                    # JSearch provides full details - skip extraction
+                    if job.platform in ["linkedin", "indeed", "glassdoor", "ziprecruiter", "monster", "jsearch"]:
+                        if job.description and len(job.description) > 200:
+                            job.extracted_at = datetime.now().isoformat()
+                            job.status = "extracted"
+                            db.upsert_job(job)
                             stats["extracted"] += 1
-                            print(f"   ✓ {db_job.title[:40] if db_job.title else 'Unknown'}")
+                            jsearch_count += 1
+                            print(f"   ✓ {job.title[:35]} (JSearch - full details)")
                         else:
-                            print(f"   ~ {db_job.title[:40]} (crawl skipped)")
+                            # JSearch job with incomplete data - mark as needing extraction
+                            jobs_needing_extraction.append(job)
+                    else:
+                        jobs_needing_extraction.append(job)
 
-                else:
-                    # Fallback to Shutter
-                    print("   (Extracting via Shutter)")
-                    for db_job in jobs_to_extract:
-                        try:
-                            extracted = await extract_job_async(
-                                url=db_job.url,
-                                query=DEFAULT_JOB_QUERY,
-                                model="accurate",
-                            )
+                # Only extract jobs that actually need it
+                if jobs_needing_extraction:
+                    print(f"   (~ {len(jobs_needing_extraction)} jobs need extraction)")
+                    urls = [job.url for job in jobs_needing_extraction]
 
-                            db_job.title = extracted.title or db_job.title
-                            db_job.company = extracted.company
-                            db_job.location = extracted.location
-                            db_job.remote = extracted.remote or False
-                            db_job.salary_min = extracted.salary_min
-                            db_job.salary_max = extracted.salary_max
-                            db_job.salary_text = extracted.salary_text
-                            db_job.description = extracted.description
-                            db_job.requirements = extracted.requirements
-                            db_job.preferred = extracted.preferred
-                            db_job.extracted_at = datetime.now().isoformat()
-                            db_job.status = "extracted"
-                            db_job.shutter_pi_detected = extracted.pi_detected
+                    # Use Tavily for extraction if available
+                    if secrets.get("TAVILY_API_KEY"):
+                        print("   (Crawling via Tavily)")
+                        crawled = await crawl_jobs(
+                            urls=urls,
+                            tavily_api_key=secrets["TAVILY_API_KEY"],
+                        )
+                        crawled_map = {c.url: c for c in crawled}
 
-                            db.upsert_job(db_job)
-                            stats["extracted"] += 1
+                        for db_job in jobs_needing_extraction:
+                            if db_job.url in crawled_map:
+                                crawled_job = crawled_map[db_job.url]
+                                db_job.title = crawled_job.title or db_job.title
+                                db_job.description = crawled_job.content or db_job.description
+                                db_job.extracted_at = datetime.now().isoformat()
+                                db_job.status = "extracted"
+                                db.upsert_job(db_job)
+                                stats["extracted"] += 1
+                                print(f"   ✓ {db_job.title[:35] if db_job.title else 'Unknown'}")
+                            else:
+                                print(f"   ~ {db_job.title[:35]} (crawl failed)")
 
-                            print(f"   ✓ {db_job.title[:40] if db_job.title else 'Unknown'}")
+                    else:
+                        # Fallback to Shutter
+                        print("   (Extracting via Shutter)")
+                        for db_job in jobs_needing_extraction:
+                            try:
+                                extracted = await extract_job_async(
+                                    url=db_job.url,
+                                    query=DEFAULT_JOB_QUERY,
+                                    model="accurate",
+                                )
 
-                        except Exception as e:
-                            error_msg = f"Extraction failed for {db_job.url}: {e}"
-                            errors.append(error_msg)
-                            print(f"   ✗ {error_msg[:60]}...")
+                                db_job.title = extracted.title or db_job.title
+                                db_job.company = extracted.company
+                                db_job.location = extracted.location
+                                db_job.remote = extracted.remote or False
+                                db_job.salary_min = extracted.salary_min
+                                db_job.salary_max = extracted.salary_max
+                                db_job.salary_text = extracted.salary_text
+                                db_job.description = extracted.description
+                                db_job.requirements = extracted.requirements
+                                db_job.preferred = extracted.preferred
+                                db_job.extracted_at = datetime.now().isoformat()
+                                db_job.status = "extracted"
+                                db_job.shutter_pi_detected = extracted.pi_detected
 
-            print(f"   ✓ Extracted {stats['extracted']} jobs")
+                                db.upsert_job(db_job)
+                                stats["extracted"] += 1
+
+                                print(f"   ✓ {db_job.title[:40] if db_job.title else 'Unknown'}")
+
+                            except Exception as e:
+                                error_msg = f"Extraction failed for {db_job.url}: {e}"
+                                errors.append(error_msg)
+                                print(f"   ✗ {error_msg[:60]}...")
+
+            print(f"   ✓ Extracted {stats['extracted']} jobs (JSearch provides full details)")
 
         # Phase 3: Scoring (unless email_only)
         if not email_only:
