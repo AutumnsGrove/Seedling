@@ -1,9 +1,17 @@
 """Configuration loader for Seedling.
 
-Loads secrets from secrets.json and provides a unified interface.
+Loads secrets from ~/.seedling/secrets.json
+
+Example secrets.json:
+{
+    "OPENROUTER_API_KEY": "sk-or-v1-..."2_ACCOUNT_ID": "...",
+   ,
+    "R ...
+}
 """
 
 import json
+import os
 from pathlib import Path
 from typing import Any, TypedDict
 
@@ -39,7 +47,7 @@ class Config:
         self._secrets: Secrets | None = None
 
     def load_secrets(self) -> Secrets:
-        """Load secrets from JSON file.
+        """Load secrets from secrets.json.
 
         Returns:
             Secrets dict with all API keys.
@@ -53,8 +61,8 @@ class Config:
 
         if not self.secrets_path.exists():
             raise FileNotFoundError(
-                f"Secrets file not found: {self.secrets_path}. "
-                "Please create it from secrets_template.json."
+                f"secrets.json not found at {self.secrets_path}\n"
+                f"Create it with the required API keys."
             )
 
         with open(self.secrets_path, "r") as f:
