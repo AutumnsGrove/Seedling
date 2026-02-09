@@ -1,0 +1,4 @@
+secrets.json
+*.log
+__pycache__/
+.DS_Store
