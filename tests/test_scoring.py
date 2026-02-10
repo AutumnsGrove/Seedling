@@ -87,6 +87,55 @@ class TestJobScorer:
         assert "empty" in reason.lower()
 
     @pytest.mark.asyncio
+    async def test_quick_reject_pass_in_multiline(self, scorer, mock_openai_response) -> None:
+        """PASS buried in explanation text is still detected."""
+        s, mock_client = scorer
+        mock_client.chat.completions.create.return_value = mock_openai_response(
+            "Based on the job listing, this looks like a good fit.\nPASS"
+        )
+
+        passed, reason = await s.quick_reject("Junior developer position")
+        assert passed is True
+        assert reason is None
+
+    @pytest.mark.asyncio
+    async def test_quick_reject_reject_in_multiline(self, scorer, mock_openai_response) -> None:
+        """REJECT: reason buried in explanation text is extracted."""
+        s, mock_client = scorer
+        mock_client.chat.completions.create.return_value = mock_openai_response(
+            "Let me evaluate each criterion:\n"
+            "1. YES - requires 5 years\n"
+            "2. YES - senior level\n"
+            "REJECT: Requires 5+ years and senior level"
+        )
+
+        passed, reason = await s.quick_reject("Senior Python developer 5+ years")
+        assert passed is False
+        assert "5+ years" in reason
+
+    @pytest.mark.asyncio
+    async def test_quick_reject_reject_without_reason(self, scorer, mock_openai_response) -> None:
+        """Just 'REJECT' with no colon or reason."""
+        s, mock_client = scorer
+        mock_client.chat.completions.create.return_value = mock_openai_response("REJECT")
+
+        passed, reason = await s.quick_reject("Some job")
+        assert passed is False
+        assert reason == "Rejected (no specific reason given)"
+
+    @pytest.mark.asyncio
+    async def test_quick_reject_ambiguous_defaults_reject(self, scorer, mock_openai_response) -> None:
+        """Response mentions both PASS and REJECT — defaults to reject."""
+        s, mock_client = scorer
+        mock_client.chat.completions.create.return_value = mock_openai_response(
+            "This could PASS but I think REJECT: too senior"
+        )
+
+        passed, reason = await s.quick_reject("Staff engineer role")
+        assert passed is False
+        assert "senior" in reason.lower()
+
+    @pytest.mark.asyncio
     async def test_score_tech_job_success(self, scorer, mock_openai_response) -> None:
         """Test scoring a tech job successfully."""
         s, mock_client = scorer

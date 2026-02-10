@@ -1,4 +1,4 @@
-"""Job scoring module using OpenRouter/Kimi K2.5.
+"""Job scoring module using OpenRouter/DeepSeek V3.2.
 
 Two-pass scoring:
 1. Quick reject (cheap, catches obvious mismatches)

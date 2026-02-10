@@ -68,19 +68,25 @@ PORTFOLIO
 
 # Prompt templates
 QUICK_REJECT_PROMPT = """\
-You are a job matching assistant. Given this job listing, answer YES or NO for each question:
+You are a job matching assistant. Decide if this candidate should apply.
 
-1. Does it require 3+ years of professional experience?
-2. Is it a senior/staff/principal/director/manager level role?
-3. Is the listed salary below $40k (tech) or below minimum wage (serving)?
-4. Is the actual role significantly different from the title (e.g., "Security Analyst" that's really Help Desk)?
-5. Does it require a specific certification I don't have (CISSP, CISM, etc.)?
+Candidate: Entry-level, BS in IT/Cybersecurity, Python/TypeScript/Cloudflare/React.
+Seeking: Tech roles (remote preferred, Atlanta onsite) or serving (Atlanta area).
+
+REJECT if ANY are true:
+1. Requires 3+ years of professional experience
+2. Senior/staff/principal/director/manager level role
+3. Tech salary below $40k. For serving: tipped wages ($2.13-$15/hr base + tips) are normal — only reject if explicitly below federal minimum wage with no tips mentioned
+4. Role is significantly different from the title
+5. Requires a certification the candidate lacks (CISSP, CISM, PE, etc.)
 
 Job listing:
 {job_description}
 
-Respond with EXACTLY one line in this format:
-PASS or REJECT: <reason>
+Respond with EXACTLY one line:
+PASS
+or
+REJECT: <brief reason>
 """
 
 
@@ -177,13 +183,19 @@ class JobScorer:
             logging.warning("quick_reject: LLM returned empty string")
             return False, "LLM returned empty response"
 
-        if content.startswith("PASS"):
+        content_upper = content.upper()
+
+        if "PASS" in content_upper and "REJECT" not in content_upper:
             return True, None
 
-        # Extract reason after "REJECT: "
-        if ":" in content:
-            reason = content.split(":", 1)[1].strip()
-            return False, reason
+        if "REJECT" in content_upper:
+            # Extract reason from "REJECT: <reason>" anywhere in response
+            for line in content.split("\n"):
+                if "REJECT" in line.upper() and ":" in line:
+                    reason = line.split(":", 1)[1].strip()
+                    if reason:
+                        return False, reason
+            return False, "Rejected (no specific reason given)"
 
         return False, "Unknown reason"
 

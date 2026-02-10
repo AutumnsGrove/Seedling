@@ -298,7 +298,7 @@ async def run_pipeline(
         # Phase 3: Scoring (unless email_only)
         if not email_only:
             print("\n📊 Phase 3: Scoring")
-            print("   (Scoring jobs using Kimi K2.5)")
+            print("   (Scoring via DeepSeek V3.2 on OpenRouter)")
 
             scorer = JobScorer(api_key=secrets["OPENROUTER_API_KEY"])
 
