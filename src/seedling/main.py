@@ -6,8 +6,9 @@ Orchestrates the complete pipeline: discover → extract → score → tailor �
 import asyncio
 import argparse
 import json
+import logging
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -15,18 +16,7 @@ from nanoid import generate
 
 from seedling.config import load_secrets
 from seedling.db import Database, Job, Run, get_database
-from seedling.discovery.rss import (
-    DiscoveredJob,
-    generate_url_hash,
-)
-from seedling.discovery.web_search import (
-    WebSearchDiscovery,
-    crawl_jobs,
-)
-from seedling.discovery.jsearch import (
-    JSearchDiscovery,
-    discover_jobs as discover_jobs_jsearch,
-)
+from seedling.discovery.jobspy import JobSpyDiscovery, generate_url_hash
 from seedling.extraction.shutter import (
     ExtractedJob,
     extract_job_async,
@@ -42,9 +32,12 @@ from seedling.tailoring.tailor import (
 )
 from seedling.notify.digest import (
     DigestJob,
+    DigestStats,
     create_digest_jobs_from_db_jobs,
     send_digest,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def parse_args() -> argparse.Namespace:
@@ -80,10 +73,89 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _infer_category(job: Job) -> str:
+    """Infer job category from title and description.
+
+    Args:
+        job: Job to categorize.
+
+    Returns:
+        Category string.
+    """
+    text = f"{job.title or ''} {job.description or ''}".lower()
+
+    # Serving keywords — specific to food service, not generic "server"
+    serving_keywords = [
+        "restaurant server", "food server", "bartender", "barista",
+        "hostess", "food runner", "busser", "waitstaff", "waitress",
+        "waiter", "dining", "food service", "dishwasher", "line cook",
+        "prep cook", "host/hostess", "catering",
+    ]
+    if any(kw in text for kw in serving_keywords):
+        return "serving"
+
+    # Tech subcategories — checked after serving to avoid false positives
+    if "security" in text or "cyber" in text or "soc analyst" in text:
+        return "tech-cyber"
+    elif "systems" in text or "infrastructure" in text or "platform" in text:
+        return "tech-systems"
+    elif "full stack" in text or "fullstack" in text or "frontend" in text or "backend" in text:
+        return "tech-fullstack"
+    elif "devops" in text or "sre" in text or "site reliability" in text:
+        return "tech-devops"
+
+    return "tech-devops"  # Default
+
+
+def _calc_stats(jobs: list[Job]) -> DigestStats:
+    """Calculate stats for digest.
+
+    Args:
+        jobs: List of jobs.
+
+    Returns:
+        DigestStats instance.
+    """
+    return DigestStats(
+        total_discovered=len(jobs),
+        total_extracted=sum(1 for j in jobs if j.extracted_at),
+        total_rejected=sum(1 for j in jobs if j.status == "rejected"),
+        total_qualified=sum(1 for j in jobs if j.status in ["qualified", "emailed"]),
+        tech_count=sum(1 for j in jobs if j.category and j.category.startswith("tech")),
+        serving_count=sum(1 for j in jobs if j.category == "serving"),
+    )
+
+
+def _get_rejected_summary(db: Database) -> str:
+    """Get summary of rejected jobs.
+
+    Args:
+        db: Database instance.
+
+    Returns:
+        Summary string.
+    """
+    today_rejected = db.get_jobs_by_status("rejected", limit=10)
+    if not today_rejected:
+        return "No jobs rejected today."
+
+    reasons: dict[str, int] = {}
+    for job in today_rejected:
+        reason = job.quick_reject_reason or "Unknown"
+        reasons[reason] = reasons.get(reason, 0) + 1
+
+    lines = ["Rejection reasons:"]
+    for reason, count in sorted(reasons.items(), key=lambda x: -x[1]):
+        lines.append(f"  - {reason}: {count}")
+
+    return "\n".join(lines)
+
+
 async def run_pipeline(
     dry_run: bool = False,
     score_only: bool = False,
     email_only: bool = False,
+    config_path: Path | None = None,
 ) -> None:
     """Run the complete Seedling pipeline.
 
@@ -91,17 +163,19 @@ async def run_pipeline(
         dry_run: If True, skip email sending.
         score_only: If True, only score already extracted jobs.
         email_only: If True, only send the digest email.
+        config_path: Optional path to secrets.json.
     """
-    start_time = datetime.now()
+    now = datetime.now(timezone.utc)
+    start_time = now
     run_id = generate(size=12)
 
-    print(f"🌱 Seedling v0.1.0 - {start_time.strftime('%Y-%m-%d %H:%M')}")
+    print(f"🌱 Seedling v0.1.0 - {now.strftime('%Y-%m-%d %H:%M')} UTC")
     print(f"   Run ID: {run_id}")
     print()
 
     # Load secrets
     try:
-        secrets = load_secrets()
+        secrets = load_secrets(config_path)
         print(f"✓ Loaded secrets for {secrets['SEEDLING_EMAIL']}")
     except FileNotFoundError as e:
         print(f"✗ Error: {e}")
@@ -132,190 +206,94 @@ async def run_pipeline(
         # Phase 1: Discovery (unless score_only or email_only)
         if not score_only and not email_only:
             print("\n📡 Phase 1: Discovery")
+            print("   (Searching via JobSpy — Indeed + Google Jobs)")
 
-            discovered_jobs: list[DiscoveredJob] = []
+            try:
+                discovery = JobSpyDiscovery()
+                discovered_jobs = await discovery.discover_all_async()
 
-            # Use JSearch API for job discovery (primary - no bot protection!)
-            jsearch_key = secrets.get("JSEARCH_API_KEY")
-            if jsearch_key:
-                print("   (Searching via JSearch API)")
-                async with JSearchDiscovery(api_key=jsearch_key) as search:
-                    async for result in search.discover_from_queries(remote_only=True):
-                        url_hash = generate_url_hash(result.url)
-                        existing = db.get_job_by_url_hash(url_hash)
-                        if existing is None:
-                            job = DiscoveredJob(
-                                platform=result.platform,
-                                url=result.url,
-                                title=result.title,
-                                company=result.company,
-                                location=result.location,
-                                description=result.description,
-                                published_at=result.posted_at or datetime.now().isoformat(),
-                            )
-                            discovered_jobs.append(job)
-                            stats["discovered"] += 1
+                # Deduplicate against database and save
+                new_count = 0
+                for job in discovered_jobs:
+                    url_hash = generate_url_hash(job.url)
+                    existing = db.get_job_by_url_hash(url_hash)
+                    if existing is None:
+                        db_job = Job(
+                            id=generate(size=8),
+                            platform=job.platform,
+                            url=job.url,
+                            url_hash=url_hash,
+                            title=job.title,
+                            company=job.company,
+                            location=job.location,
+                            remote=job.is_remote,
+                            salary_min=job.salary_min,
+                            salary_max=job.salary_max,
+                            description=job.description,
+                            discovered_at=datetime.now(timezone.utc).isoformat(),
+                            status="discovered",
+                        )
+                        db.upsert_job(db_job)
+                        new_count += 1
 
-            # Fallback to Tavily if JSearch not configured
-            elif secrets.get("TAVILY_API_KEY"):
-                print("   (Searching via Tavily)")
-                async with WebSearchDiscovery(
-                    tavily_api_key=secrets["TAVILY_API_KEY"],
-                ) as search:
-                    async for result in search.discover_from_queries(provider="tavily"):
-                        url_hash = generate_url_hash(result.url)
-                        existing = db.get_job_by_url_hash(url_hash)
-                        if existing is None:
-                            job = DiscoveredJob(
-                                platform="tavily",
-                                url=result.url,
-                                title=result.title,
-                                company=None,
-                                location=None,
-                                description=result.snippet[:1000],
-                                published_at=datetime.now().isoformat(),
-                            )
-                            discovered_jobs.append(job)
-                            stats["discovered"] += 1
+                stats["discovered"] = new_count
+                print(f"   ✓ Found {len(discovered_jobs)} total, {new_count} new jobs")
 
-            # Fallback to Exa if Tavily not available
-            elif secrets.get("EXA_API_KEY"):
-                print("   (Searching via Exa)")
-                async with WebSearchDiscovery(
-                    exa_api_key=secrets["EXA_API_KEY"],
-                ) as search:
-                    async for result in search.discover_from_queries(provider="exa"):
-                        url_hash = generate_url_hash(result.url)
-                        existing = db.get_job_by_url_hash(url_hash)
-                        if existing is None:
-                            job = DiscoveredJob(
-                                platform="exa",
-                                url=result.url,
-                                title=result.title,
-                                company=None,
-                                location=None,
-                                description=result.snippet[:1000],
-                                published_at=datetime.now().isoformat(),
-                            )
-                            discovered_jobs.append(job)
-                            stats["discovered"] += 1
-
-            else:
-                print("   ⚠️ No JSearch API key configured")
-                print("   Set JSEARCH_API_KEY in secrets.json for bot-free discovery")
-                print("   Get a free key at: https://rapidapi.com/taq-najjar/api/jsearch")
-
-            # Save discovered jobs to database
-            for job in discovered_jobs:
-                db_job = Job(
-                    id=generate(size=8),
-                    platform=job.platform,
-                    url=job.url,
-                    url_hash=generate_url_hash(job.url),
-                    title=job.title,
-                    company=job.company,
-                    location=job.location,
-                    description=job.description,
-                    discovered_at=datetime.now().isoformat(),
-                    status="discovered",
-                )
-                db.upsert_job(db_job)
-
-            print(f"   ✓ Found {stats['discovered']} new jobs")
+            except Exception as e:
+                error_msg = f"Discovery failed: {e}"
+                errors.append(error_msg)
+                print(f"   ✗ {error_msg}")
 
         # Phase 2: Extraction (unless email_only)
         if not email_only:
             print("\n🔍 Phase 2: Extraction")
-            print("   (Extracting job details - JSearch jobs have full details)")
 
-            jobs_to_extract = db.get_jobs_by_status("discovered", limit=20)
+            jobs_to_extract = db.get_jobs_by_status("discovered", limit=50)
 
             if not jobs_to_extract:
                 print("   (No jobs to extract)")
             else:
-                # Separate JSearch jobs (skip extraction) from others
-                jobs_needing_extraction = []
-                jsearch_count = 0
-
                 for job in jobs_to_extract:
-                    # JSearch provides full details - skip extraction
-                    if job.platform in ["linkedin", "indeed", "glassdoor", "ziprecruiter", "monster", "jsearch"]:
-                        if job.description and len(job.description) > 200:
-                            job.extracted_at = datetime.now().isoformat()
+                    # JobSpy provides full descriptions — skip Shutter for those
+                    if job.description and len(job.description) > 200:
+                        job.extracted_at = datetime.now(timezone.utc).isoformat()
+                        job.status = "extracted"
+                        db.upsert_job(job)
+                        stats["extracted"] += 1
+                        print(f"   ✓ {(job.title or 'Unknown')[:35]} (full description)")
+                    else:
+                        # Short/missing description — try Shutter
+                        try:
+                            extracted = await extract_job_async(
+                                url=job.url,
+                                query=DEFAULT_JOB_QUERY,
+                                model="accurate",
+                            )
+
+                            job.title = extracted.title or job.title
+                            job.company = extracted.company or job.company
+                            job.location = extracted.location or job.location
+                            job.remote = extracted.remote or False
+                            job.salary_min = extracted.salary_min
+                            job.salary_max = extracted.salary_max
+                            job.salary_text = extracted.salary_text
+                            job.description = extracted.description or job.description
+                            job.requirements = extracted.requirements
+                            job.preferred = extracted.preferred
+                            job.extracted_at = datetime.now(timezone.utc).isoformat()
                             job.status = "extracted"
+                            job.shutter_pi_detected = extracted.pi_detected
+
                             db.upsert_job(job)
                             stats["extracted"] += 1
-                            jsearch_count += 1
-                            print(f"   ✓ {job.title[:35]} (JSearch - full details)")
-                        else:
-                            # JSearch job with incomplete data - mark as needing extraction
-                            jobs_needing_extraction.append(job)
-                    else:
-                        jobs_needing_extraction.append(job)
+                            print(f"   ✓ {(job.title or 'Unknown')[:35]} (Shutter)")
 
-                # Only extract jobs that actually need it
-                if jobs_needing_extraction:
-                    print(f"   (~ {len(jobs_needing_extraction)} jobs need extraction)")
-                    urls = [job.url for job in jobs_needing_extraction]
+                        except Exception as e:
+                            error_msg = f"Extraction failed for {job.url}: {e}"
+                            errors.append(error_msg)
+                            print(f"   ✗ {str(e)[:60]}...")
 
-                    # Use Tavily for extraction if available
-                    if secrets.get("TAVILY_API_KEY"):
-                        print("   (Crawling via Tavily)")
-                        crawled = await crawl_jobs(
-                            urls=urls,
-                            tavily_api_key=secrets["TAVILY_API_KEY"],
-                        )
-                        crawled_map = {c.url: c for c in crawled}
-
-                        for db_job in jobs_needing_extraction:
-                            if db_job.url in crawled_map:
-                                crawled_job = crawled_map[db_job.url]
-                                db_job.title = crawled_job.title or db_job.title
-                                db_job.description = crawled_job.content or db_job.description
-                                db_job.extracted_at = datetime.now().isoformat()
-                                db_job.status = "extracted"
-                                db.upsert_job(db_job)
-                                stats["extracted"] += 1
-                                print(f"   ✓ {db_job.title[:35] if db_job.title else 'Unknown'}")
-                            else:
-                                print(f"   ~ {db_job.title[:35]} (crawl failed)")
-
-                    else:
-                        # Fallback to Shutter
-                        print("   (Extracting via Shutter)")
-                        for db_job in jobs_needing_extraction:
-                            try:
-                                extracted = await extract_job_async(
-                                    url=db_job.url,
-                                    query=DEFAULT_JOB_QUERY,
-                                    model="accurate",
-                                )
-
-                                db_job.title = extracted.title or db_job.title
-                                db_job.company = extracted.company
-                                db_job.location = extracted.location
-                                db_job.remote = extracted.remote or False
-                                db_job.salary_min = extracted.salary_min
-                                db_job.salary_max = extracted.salary_max
-                                db_job.salary_text = extracted.salary_text
-                                db_job.description = extracted.description
-                                db_job.requirements = extracted.requirements
-                                db_job.preferred = extracted.preferred
-                                db_job.extracted_at = datetime.now().isoformat()
-                                db_job.status = "extracted"
-                                db_job.shutter_pi_detected = extracted.pi_detected
-
-                                db.upsert_job(db_job)
-                                stats["extracted"] += 1
-
-                                print(f"   ✓ {db_job.title[:40] if db_job.title else 'Unknown'}")
-
-                            except Exception as e:
-                                error_msg = f"Extraction failed for {db_job.url}: {e}"
-                                errors.append(error_msg)
-                                print(f"   ✗ {error_msg[:60]}...")
-
-            print(f"   ✓ Extracted {stats['extracted']} jobs (JSearch provides full details)")
+                print(f"   ✓ Extracted {stats['extracted']} jobs")
 
         # Phase 3: Scoring (unless email_only)
         if not email_only:
@@ -324,7 +302,7 @@ async def run_pipeline(
 
             scorer = JobScorer(api_key=secrets["OPENROUTER_API_KEY"])
 
-            jobs_to_score = db.get_jobs_by_status("extracted", limit=20)
+            jobs_to_score = db.get_jobs_by_status("extracted", limit=50)
 
             for db_job in jobs_to_score:
                 try:
@@ -338,10 +316,11 @@ async def run_pipeline(
                     if not passed:
                         db_job.status = "rejected"
                         db_job.quick_reject_reason = reject_reason
-                        db_job.scored_at = datetime.now().isoformat()
+                        db_job.category = category
+                        db_job.scored_at = datetime.now(timezone.utc).isoformat()
                         stats["quick_rejected"] += 1
                         db.upsert_job(db_job)
-                        print(f"   ✗ {db_job.title[:35]} - rejected")
+                        print(f"   ✗ {(db_job.title or 'Unknown')[:35]} - rejected")
                         continue
 
                     # Score the job
@@ -351,17 +330,17 @@ async def run_pipeline(
                     db_job.category = scored.category
                     db_job.score_breakdown = json.dumps(scored.score_breakdown)
                     db_job.score_summary = scored.score_summary
-                    db_job.scored_at = datetime.now().isoformat()
+                    db_job.scored_at = datetime.now(timezone.utc).isoformat()
 
                     # Determine if qualified
                     threshold = scorer.serving_threshold if category == "serving" else scorer.tech_threshold
                     if scored.match_score >= threshold:
                         db_job.status = "qualified"
                         stats["qualified"] += 1
-                        print(f"   ✓ {db_job.title[:35]} - {scored.match_score}pts")
+                        print(f"   ✓ {(db_job.title or 'Unknown')[:35]} - {scored.match_score}pts")
                     else:
                         db_job.status = "scored"  # Scored but not qualified
-                        print(f"   ~ {db_job.title[:35]} - {scored.match_score}pts (not qualified)")
+                        print(f"   ~ {(db_job.title or 'Unknown')[:35]} - {scored.match_score}pts (below threshold)")
 
                     stats["scored"] += 1
                     db.upsert_job(db_job)
@@ -369,7 +348,7 @@ async def run_pipeline(
                 except Exception as e:
                     error_msg = f"Scoring failed for {db_job.url}: {e}"
                     errors.append(error_msg)
-                    print(f"   ✗ Scoring error: {error_msg[:50]}")
+                    print(f"   ✗ Scoring error: {str(e)[:50]}")
 
             print(f"   ✓ Scored {stats['scored']} jobs ({stats['qualified']} qualified, {stats['quick_rejected']} rejected)")
 
@@ -387,6 +366,7 @@ async def run_pipeline(
                     access_key_id=secrets["R2_ACCESS_KEY_ID"],
                     secret_access_key=secrets["R2_SECRET_ACCESS_KEY"],
                     bucket=secrets["R2_BUCKET"],
+                    public_url=secrets.get("R2_PUBLIC_URL", ""),
                 )
 
                 tailor = ResumeTailor(
@@ -395,7 +375,7 @@ async def run_pipeline(
 
                 for db_job in qualified_jobs:
                     try:
-                        print(f"   Tailoring for {db_job.title[:30]}...")
+                        print(f"   Tailoring for {(db_job.title or 'Unknown')[:30]}...")
 
                         # Generate resume
                         if db_job.category == "serving":
@@ -428,7 +408,8 @@ async def run_pipeline(
                                 cl_url = r2_uploader.upload_cover_letter(cover_letter)
                                 db_job.cover_letter_r2_url = cl_url
 
-                        print(f"   ✓ {db_job.title[:30]} - uploaded")
+                        db.upsert_job(db_job)
+                        print(f"   ✓ {(db_job.title or 'Unknown')[:30]} - uploaded")
 
                     except Exception as e:
                         error_msg = f"Tailoring failed for {db_job.id}: {e}"
@@ -465,7 +446,7 @@ async def run_pipeline(
                     for job in todays_jobs:
                         if job.status == "qualified":
                             job.status = "emailed"
-                            job.emailed_at = datetime.now().isoformat()
+                            job.emailed_at = datetime.now(timezone.utc).isoformat()
                             db.upsert_job(job)
                 else:
                     print("   ✗ Failed to send email")
@@ -476,7 +457,7 @@ async def run_pipeline(
             print("\n⏭️ Phase 5: Notification (skipped --dry-run)")
 
         # Update run record
-        end_time = datetime.now()
+        end_time = datetime.now(timezone.utc)
         duration = (end_time - start_time).total_seconds()
 
         run.completed_at = end_time.isoformat()
@@ -505,79 +486,6 @@ async def run_pipeline(
         raise
 
 
-def _infer_category(job: Job) -> str:
-    """Infer job category from title and description.
-
-    Args:
-        job: Job to categorize.
-
-    Returns:
-        Category string.
-    """
-    text = f"{job.title or ''} {job.description or ''}".lower()
-
-    # Serving keywords
-    serving_keywords = ["server", "bartender", "host", "restaurant", "food", "dining", "server"]
-    if any(kw in text for kw in serving_keywords):
-        return "serving"
-
-    # Tech subcategories
-    if "security" in text or "cyber" in text:
-        return "tech-cyber"
-    elif "systems" in text or "infrastructure" in text or "platform" in text:
-        return "tech-systems"
-    elif "full stack" in text or "frontend" in text or "backend" in text:
-        return "tech-fullstack"
-    elif "devops" in text or "sre" in text or "site reliability" in text:
-        return "tech-devops"
-
-    return "tech-devops"  # Default
-
-
-def _calc_stats(jobs: list[Job]) -> dict:
-    """Calculate stats for digest.
-
-    Args:
-        jobs: List of jobs.
-
-    Returns:
-        Stats dict.
-    """
-    return {
-        "total_discovered": len(jobs),
-        "total_extracted": sum(1 for j in jobs if j.extracted_at),
-        "total_rejected": sum(1 for j in jobs if j.status == "rejected"),
-        "total_qualified": sum(1 for j in jobs if j.status in ["qualified", "emailed"]),
-        "tech_count": sum(1 for j in jobs if j.category and j.category.startswith("tech")),
-        "serving_count": sum(1 for j in jobs if j.category == "serving"),
-    }
-
-
-def _get_rejected_summary(db: Database) -> str:
-    """Get summary of rejected jobs.
-
-    Args:
-        db: Database instance.
-
-    Returns:
-        Summary string.
-    """
-    today_rejected = db.get_jobs_by_status("rejected", limit=10)
-    if not today_rejected:
-        return "No jobs rejected today."
-
-    reasons: dict[str, int] = {}
-    for job in today_rejected:
-        reason = job.quick_reject_reason or "Unknown"
-        reasons[reason] = reasons.get(reason, 0) + 1
-
-    lines = ["Rejection reasons:"]
-    for reason, count in sorted(reasons.items(), key=lambda x: -x[1]):
-        lines.append(f"  - {reason}: {count}")
-
-    return "\n".join(lines)
-
-
 def main() -> None:
     """Main entry point."""
     args = parse_args()
@@ -587,6 +495,7 @@ def main() -> None:
         dry_run=args.dry_run,
         score_only=args.score_only,
         email_only=args.email_only,
+        config_path=args.config,
     ))
 
 

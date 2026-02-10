@@ -6,6 +6,7 @@ Two-pass scoring:
 """
 
 import json
+import logging
 from dataclasses import dataclass
 from typing import Optional
 
@@ -167,7 +168,11 @@ class JobScorer:
             max_tokens=100,
         )
 
-        content = response.choices[0].message.content.strip()
+        raw_content = response.choices[0].message.content
+        if raw_content is None:
+            logging.warning("quick_reject: LLM returned None content")
+            return False, "LLM returned empty response"
+        content = raw_content.strip()
 
         if content.startswith("PASS"):
             return True, None
@@ -203,7 +208,19 @@ class JobScorer:
             max_tokens=300,
         )
 
-        content = response.choices[0].message.content.strip()
+        raw_content = response.choices[0].message.content
+        if raw_content is None:
+            logging.warning("score_tech_job: LLM returned None content")
+            return ScoredJob(
+                url="",
+                match_score=0,
+                category="tech-devops",
+                score_breakdown={},
+                score_summary="LLM returned empty response",
+                quick_reject_reason=None,
+                passed_quick_reject=True,
+            )
+        content = raw_content.strip()
 
         # Parse JSON response
         try:
@@ -224,14 +241,14 @@ class JobScorer:
                     passed_quick_reject=True,
                 )
         except (json.JSONDecodeError, KeyError) as e:
-            pass
+            logging.warning(f"score_tech_job: Failed to parse JSON: {e}")
 
         # Fallback: parse raw response
         return ScoredJob(
             url="",
-            match_score=50,
+            match_score=0,
             category="tech-devops",
-            score_breakdown={"skill_match": 50, "growth": 50, "logistics": 50, "compensation": 50, "ease": 50},
+            score_breakdown={},
             score_summary="Could not parse scoring response",
             quick_reject_reason=None,
             passed_quick_reject=True,
@@ -261,7 +278,19 @@ class JobScorer:
             max_tokens=300,
         )
 
-        content = response.choices[0].message.content.strip()
+        raw_content = response.choices[0].message.content
+        if raw_content is None:
+            logging.warning("score_serving_job: LLM returned None content")
+            return ScoredJob(
+                url="",
+                match_score=0,
+                category="serving",
+                score_breakdown={},
+                score_summary="LLM returned empty response",
+                quick_reject_reason=None,
+                passed_quick_reject=True,
+            )
+        content = raw_content.strip()
 
         # Parse JSON response
         try:
@@ -280,15 +309,15 @@ class JobScorer:
                     quick_reject_reason=None,
                     passed_quick_reject=True,
                 )
-        except (json.JSONDecodeError, KeyError):
-            pass
+        except (json.JSONDecodeError, KeyError) as e:
+            logging.warning(f"score_serving_job: Failed to parse JSON: {e}")
 
         # Fallback
         return ScoredJob(
             url="",
-            match_score=50,
+            match_score=0,
             category="serving",
-            score_breakdown={"location": 50, "schedule": 50, "pay": 50, "vibe": 50},
+            score_breakdown={},
             score_summary="Could not parse scoring response",
             quick_reject_reason=None,
             passed_quick_reject=True,

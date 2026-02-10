@@ -1,14 +1,13 @@
 """Resume tailoring module using Jinja2, Playwright, and R2."""
 
 import json
-import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
 import boto3
-import httpx
 from jinja2 import Environment, FileSystemLoader
+from openai import AsyncOpenAI
 
 
 @dataclass
@@ -157,8 +156,15 @@ class ResumeTailor:
         """
         self.api_key = api_key
         self.model = model
-        self.templates_dir = templates_dir or Path(__file__).parent.parent / "templates"
+        # templates/ is at project root: tailor.py -> tailoring/ -> seedling/ -> src/ -> project root
+        self.templates_dir = templates_dir or Path(__file__).parent.parent.parent.parent / "templates"
         self.output_dir = output_dir or Path.home() / ".seedling" / "output"
+
+        # Reusable OpenAI client for LLM calls
+        self.client = AsyncOpenAI(
+            api_key=self.api_key,
+            base_url="https://openrouter.ai/api/v1",
+        )
 
         # Setup Jinja2
         self.jinja_env = Environment(
@@ -269,6 +275,11 @@ class ResumeTailor:
         # Generate cover letter content
         content = await self._generate_cover_letter_content(job_description)
 
+        # Add date to template context
+        from datetime import datetime, timezone
+
+        content["date"] = datetime.now(timezone.utc).strftime("%B %d, %Y")
+
         # Render HTML template
         template = self.jinja_env.get_template("cover-letter.html")
         html_content = template.render(**content)
@@ -300,13 +311,6 @@ class ResumeTailor:
         Returns:
             Dict with tailored content.
         """
-        from openai import AsyncOpenAI
-
-        client = AsyncOpenAI(
-            api_key=self.api_key,
-            base_url="https://openrouter.ai/api/v1",
-        )
-
         prompt = f"""\
 Given this job description, reorder and tailor my resume content.
 
@@ -322,14 +326,17 @@ Output a JSON object with the tailored resume content:
 Do NOT fabricate experience. Only reorder and emphasize existing content.
 """
 
-        response = await client.chat.completions.create(
+        response = await self.client.chat.completions.create(
             model=self.model,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.3,
             max_tokens=1000,
         )
 
-        content = response.choices[0].message.content.strip()
+        raw_content = response.choices[0].message.content
+        if raw_content is None:
+            return BASE_TECH_RESUME
+        content = raw_content.strip()
 
         # Parse JSON
         try:
@@ -356,13 +363,6 @@ Do NOT fabricate experience. Only reorder and emphasize existing content.
         Returns:
             Dict with cover letter content.
         """
-        from openai import AsyncOpenAI
-
-        client = AsyncOpenAI(
-            api_key=self.api_key,
-            base_url="https://openrouter.ai/api/v1",
-        )
-
         prompt = f"""\
 Generate a brief cover letter (3 paragraphs max) for this job.
 
@@ -378,14 +378,21 @@ Output JSON:
 {{"opening": "...", "body": "...", "closing": "..."}}
 """
 
-        response = await client.chat.completions.create(
+        response = await self.client.chat.completions.create(
             model=self.model,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.5,
             max_tokens=500,
         )
 
-        content = response.choices[0].message.content.strip()
+        raw_content = response.choices[0].message.content
+        if raw_content is None:
+            return {
+                "opening": "Dear Hiring Manager,",
+                "body": "I am writing to express my interest in this position.",
+                "closing": "Thank you for your consideration.",
+            }
+        content = raw_content.strip()
 
         # Parse JSON
         try:
@@ -451,6 +458,7 @@ class R2Uploader:
         access_key_id: str,
         secret_access_key: str,
         bucket: str,
+        public_url: str = "",
     ) -> None:
         """Initialize R2 uploader.
 
@@ -459,6 +467,7 @@ class R2Uploader:
             access_key_id: R2 access key ID.
             secret_access_key: R2 secret access key.
             bucket: R2 bucket name.
+            public_url: Base URL for public access (e.g., https://pub-xxx.r2.dev).
         """
         self.client = boto3.client(
             "s3",
@@ -468,6 +477,7 @@ class R2Uploader:
         )
         self.bucket = bucket
         self.account_id = account_id
+        self.public_url = public_url.rstrip("/") if public_url else ""
 
     def upload_file(
         self,
@@ -494,6 +504,8 @@ class R2Uploader:
             )
 
         # Return public URL
+        if self.public_url:
+            return f"{self.public_url}/{key}"
         return f"https://pub-{self.account_id}.r2.dev/{key}"
 
     def upload_resume(

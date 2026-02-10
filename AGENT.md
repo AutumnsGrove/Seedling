@@ -30,7 +30,7 @@ Notify (Zephyr Worker digest email)
 |-----------|------------|
 | Runtime | Python 3.12+ via UV |
 | Database | SQLite (`~/.seedling/seedling.db`) |
-| Discovery | `feedparser` (RSS), `httpx`, Exa/Tavily API |
+| Discovery | `python-jobspy` (Indeed, Google Jobs scraping) |
 | Extraction | Shutter (local UV tool - see `/Users/autumn/Documents/Projects/Shutter`) |
 | Scoring | Kimi K2.5 via OpenRouter |
 | Tailoring | Jinja2 → HTML → Playwright PDF |
@@ -82,9 +82,7 @@ src/seedling/
 │
 ├── discovery/
 │   ├── __init__.py
-│   ├── rss.py           # Indeed RSS feed parsing
-│   ├── web_search.py    # Exa/Tavily search
-│   └── playwright.py    # Backup browser scraping
+│   └── jobspy.py        # Indeed/Google Jobs via python-jobspy
 │
 ├── extraction/
 │   ├── __init__.py
@@ -132,6 +130,7 @@ All secrets in `secrets.json` (gitignored):
   "R2_ACCESS_KEY_ID": "...",
   "R2_SECRET_ACCESS_KEY": "...",
   "R2_BUCKET": "seedling-resumes",
+  "R2_PUBLIC_URL": "",
   "ZEPHYR_URL": "https://grove-zephyr.<subdomain>.workers.dev/send",
   "ZEPHYR_API_KEY": "...",
   "SEEDLING_EMAIL": "autumnbrown23@pm.me"
@@ -185,3 +184,4 @@ Claude Code Skills are available in `.claude/skills/`:
 ---
 
 *Last updated: February 9, 2026*
+

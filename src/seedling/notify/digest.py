@@ -51,8 +51,9 @@ class DigestEmailBuilder:
         Args:
             templates_dir: Directory containing email templates.
         """
+        # templates/ is at project root: digest.py -> notify/ -> seedling/ -> src/ -> project root
         self.templates_dir = (
-            templates_dir or Path(__file__).parent.parent / "templates"
+            templates_dir or Path(__file__).parent.parent.parent.parent / "templates"
         )
         self.jinja_env = Environment(
             loader=FileSystemLoader(str(self.templates_dir)),
@@ -102,12 +103,25 @@ class DigestEmailBuilder:
         Returns:
             Plain text version.
         """
-        # Simple conversion - strip HTML tags
         import re
 
-        text = re.sub(r"<[^>]+>", "", digest_html)
+        text = digest_html
+        # Convert block elements to line breaks before stripping tags
+        text = re.sub(r"<br\s*/?>", "\n", text)
+        text = re.sub(r"</p>", "\n\n", text)
+        text = re.sub(r"</li>", "\n", text)
+        text = re.sub(r"</h[1-6]>", "\n\n", text)
+        text = re.sub(r"</div>", "\n", text)
+        text = re.sub(r"</tr>", "\n", text)
+        # Strip remaining HTML tags
+        text = re.sub(r"<[^>]+>", "", text)
         text = text.replace("&nbsp;", " ")
-        text = re.sub(r"\s+", " ", text)
+        text = text.replace("&amp;", "&")
+        text = text.replace("&lt;", "<")
+        text = text.replace("&gt;", ">")
+        # Collapse excessive whitespace but preserve intentional line breaks
+        text = re.sub(r"[ \t]+", " ", text)
+        text = re.sub(r"\n{3,}", "\n\n", text)
         return text.strip()
 
 

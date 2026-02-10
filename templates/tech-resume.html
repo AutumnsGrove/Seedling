@@ -161,24 +161,11 @@
     <section class="section">
         <h2 class="section-title">Technical Skills</h2>
         <div class="skills-grid">
-            {% if skills %}
+            {% for i in range(0, skills|length, 2) %}
             <div>
-                <span class="skill-category">Languages:</span>
-                <span class="skill-list">TypeScript, Python, Java</span>
+                <span class="skill-list">{{ skills[i] }}{% if i + 1 < skills|length %}, {{ skills[i + 1] }}{% endif %}</span>
             </div>
-            <div>
-                <span class="skill-category">Cloud:</span>
-                <span class="skill-list">Cloudflare Workers, D1, KV, R2</span>
-            </div>
-            <div>
-                <span class="skill-category">Frontend:</span>
-                <span class="skill-list">React, Tailwind, HTML/CSS</span>
-            </div>
-            <div>
-                <span class="skill-category">Other:</span>
-                <span class="skill-list">Docker, Git, SQL</span>
-            </div>
-            {% endif %}
+            {% endfor %}
         </div>
     </section>
     {% endif %}

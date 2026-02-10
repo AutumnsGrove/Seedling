@@ -1,12 +1,11 @@
 """Tests for the discovery module."""
 
-import hashlib
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from seedling.discovery import DiscoveredJob, generate_url_hash
-from seedling.discovery.rss import IndeedRSSDiscovery
+from seedling.discovery.jobspy import JobSpyDiscovery, SearchConfig
 
 
 class TestGenerateUrlHash:
@@ -15,162 +14,138 @@ class TestGenerateUrlHash:
     def test_generate_url_hash_consistency(self) -> None:
         """Same URL should produce same hash."""
         url = "https://www.indeed.com/viewjob?jk=abc123"
-        hash1 = generate_url_hash(url)
-        hash2 = generate_url_hash(url)
-        assert hash1 == hash2
+        assert generate_url_hash(url) == generate_url_hash(url)
 
     def test_generate_url_hash_different_urls(self) -> None:
         """Different URLs should produce different hashes."""
-        url1 = "https://www.indeed.com/viewjob?jk=abc123"
-        url2 = "https://www.indeed.com/viewjob?jk=def456"
-        hash1 = generate_url_hash(url1)
-        hash2 = generate_url_hash(url2)
+        hash1 = generate_url_hash("https://www.indeed.com/viewjob?jk=abc123")
+        hash2 = generate_url_hash("https://www.indeed.com/viewjob?jk=def456")
         assert hash1 != hash2
 
     def test_generate_url_hash_format(self) -> None:
-        """Hash should be valid hex string."""
-        url = "https://www.indeed.com/viewjob?jk=abc123"
-        hash_str = generate_url_hash(url)
-        assert len(hash_str) == 64  # SHA-256 produces 64 hex chars
+        """Hash should be valid SHA-256 hex string."""
+        hash_str = generate_url_hash("https://www.indeed.com/viewjob?jk=abc123")
+        assert len(hash_str) == 64
         assert all(c in "0123456789abcdef" for c in hash_str)
 
 
-class TestIndeedRSSDiscovery:
-    """Tests for Indeed RSS discovery."""
+class TestJobSpyDiscovery:
+    """Tests for JobSpy discovery."""
 
-    @pytest.fixture
-    def mock_client(self) -> MagicMock:
-        """Create a mock HTTP client."""
-        client = MagicMock()
-        client.get = AsyncMock()
-        return client
+    def test_deduplication(self) -> None:
+        """Test that discover_all_sync deduplicates by URL hash."""
+        import pandas as pd
 
-    @pytest.fixture
-    def discovery(self, mock_client: MagicMock) -> IndeedRSSDiscovery:
-        """Create a discovery instance with mock client."""
-        return IndeedRSSDiscovery(http_client=mock_client)
+        mock_df = pd.DataFrame({
+            "job_url": [
+                "https://example.com/job1",
+                "https://example.com/job1",
+                "https://example.com/job2",
+            ],
+            "title": ["Job 1", "Job 1 Duplicate", "Job 2"],
+            "company": ["Co1", "Co1", "Co2"],
+            "location": ["Remote", "Remote", "Atlanta"],
+            "description": ["Desc 1" * 50, "Desc 1" * 50, "Desc 2" * 50],
+            "is_remote": [True, True, False],
+            "min_amount": [None, None, 50000],
+            "max_amount": [None, None, 80000],
+            "date_posted": [None, None, "2024-01-01"],
+            "site": ["indeed", "indeed", "google"],
+        })
 
-    @pytest.mark.asyncio
-    async def test_parse_feed_empty(self, discovery: IndeedRSSDiscovery, mock_client: MagicMock) -> None:
-        """Test parsing an empty feed."""
-        mock_response = MagicMock()
-        mock_response.text = """<?xml version="1.0"?>
-        <rss version="2.0">
-            <channel>
-                <title>Test Feed</title>
-            </channel>
-        </rss>
-        """
-        mock_response.raise_for_status = MagicMock()
-
-        with patch.object(
-            discovery, "_get_client", return_value=mock_client
-        ):
-            mock_client.get = AsyncMock(return_value=mock_response)
-
-            jobs = []
-            async for job in discovery._parse_feed(
-                mock_client, "https://example.com/rss"
-            ):
-                jobs.append(job)
-
-            assert len(jobs) == 0
-
-    @pytest.mark.asyncio
-    async def test_parse_feed_with_entry(self, discovery: IndeedRSSDiscovery, mock_client: MagicMock) -> None:
-        """Test parsing a feed with entries."""
-        mock_response = MagicMock()
-        mock_response.text = """<?xml version="1.0"?>
-        <rss version="2.0">
-            <channel>
-                <title>Test Feed</title>
-                <item>
-                    <title>Software Engineer at Acme Corp</title>
-                    <link>https://www.indeed.com/viewjob?jk=abc123</link>
-                    <description>Full description here</description>
-                    <pubDate>Mon, 01 Jan 2024 00:00:00 GMT</pubDate>
-                </item>
-            </channel>
-        </rss>
-        """
-        mock_response.raise_for_status = MagicMock()
-
-        with patch.object(discovery, "_get_client"):
-            mock_client.get = AsyncMock(return_value=mock_response)
-
-            jobs = []
-            async for job in discovery._parse_feed(
-                mock_client, "https://example.com/rss"
-            ):
-                jobs.append(job)
-
-            assert len(jobs) == 1
-            assert jobs[0].title == "Software Engineer"
-            assert jobs[0].company == "Acme Corp"
-            assert jobs[0].platform == "indeed"
-
-    def test_entry_to_job_with_company(self, discovery: IndeedRSSDiscovery) -> None:
-        """Test extracting job with company in title."""
-        entry = MagicMock()
-        entry.link = "https://www.indeed.com/viewjob?jk=abc123"
-        entry.title = "Software Engineer at Acme Corp"
-        entry.summary = "Job description"
-        entry.published = "Mon, 01 Jan 2024 00:00:00 GMT"
-        entry.tags = []
-
-        job = discovery._entry_to_job(entry)
-
-        assert job is not None
-        assert job.title == "Software Engineer"
-        assert job.company == "Acme Corp"
-        assert job.url == "https://www.indeed.com/viewjob?jk=abc123"
-
-    def test_entry_to_job_without_company(self, discovery: IndeedRSSDiscovery) -> None:
-        """Test extracting job without company in title."""
-        entry = MagicMock()
-        entry.link = "https://www.indeed.com/viewjob?jk=abc123"
-        entry.title = "Software Engineer"
-        entry.summary = "Job description"
-        entry.published = ""
-        entry.tags = []
-
-        job = discovery._entry_to_job(entry)
-
-        assert job is not None
-        assert job.title == "Software Engineer"
-        assert job.company is None
-
-    def test_entry_to_job_missing_link(self, discovery: IndeedRSSDiscovery) -> None:
-        """Test entry with no link returns None."""
-        entry = MagicMock()
-        entry.link = None
-        entry.title = "Software Engineer"
-        entry.summary = ""
-        entry.published = ""
-        entry.tags = []
-
-        job = discovery._entry_to_job(entry)
-
-        assert job is None
-
-
-class TestDiscoveredJob:
-    """Tests for DiscoveredJob dataclass."""
-
-    def test_discovered_job_creation(self) -> None:
-        """Test creating a DiscoveredJob."""
-        job = DiscoveredJob(
-            platform="indeed",
-            url="https://www.indeed.com/viewjob?jk=abc123",
-            title="Software Engineer",
-            company="Acme Corp",
-            location="Remote",
-            description="Full job description",
-            published_at="2024-01-01T00:00:00",
+        discovery = JobSpyDiscovery(
+            tech_searches=[SearchConfig(query="test", location="", category="tech")],
+            serving_searches=[],
         )
 
-        assert job.platform == "indeed"
-        assert job.url == "https://www.indeed.com/viewjob?jk=abc123"
-        assert job.title == "Software Engineer"
-        assert job.company == "Acme Corp"
-        assert job.location == "Remote"
+        with patch("seedling.discovery.jobspy.scrape_jobs", return_value=mock_df):
+            jobs = discovery.discover_all_sync()
+
+        assert len(jobs) == 2
+        urls = [j.url for j in jobs]
+        assert "https://example.com/job1" in urls
+        assert "https://example.com/job2" in urls
+
+    def test_run_search_handles_empty_result(self) -> None:
+        """Test that _run_search handles empty DataFrame."""
+        import pandas as pd
+
+        discovery = JobSpyDiscovery()
+        config = SearchConfig(query="test", location="", category="tech")
+
+        with patch("seedling.discovery.jobspy.scrape_jobs", return_value=pd.DataFrame()):
+            jobs = discovery._run_search(config)
+
+        assert jobs == []
+
+    def test_run_search_handles_exception(self) -> None:
+        """Test that _run_search handles exceptions gracefully."""
+        discovery = JobSpyDiscovery()
+        config = SearchConfig(query="test", location="", category="tech")
+
+        with patch(
+            "seedling.discovery.jobspy.scrape_jobs",
+            side_effect=Exception("API error"),
+        ):
+            jobs = discovery._run_search(config)
+
+        assert jobs == []
+
+    def test_run_search_parses_salary(self) -> None:
+        """Test that _run_search correctly parses salary fields."""
+        import pandas as pd
+
+        mock_df = pd.DataFrame({
+            "job_url": ["https://example.com/job1"],
+            "title": ["Engineer"],
+            "company": ["Corp"],
+            "location": ["Remote"],
+            "description": ["A" * 300],
+            "is_remote": [True],
+            "min_amount": [80000.0],
+            "max_amount": [120000.0],
+            "date_posted": ["2024-06-15"],
+            "site": ["indeed"],
+        })
+
+        discovery = JobSpyDiscovery()
+        config = SearchConfig(query="test", location="", category="tech")
+
+        with patch("seedling.discovery.jobspy.scrape_jobs", return_value=mock_df):
+            jobs = discovery._run_search(config)
+
+        assert len(jobs) == 1
+        assert jobs[0].salary_min == 80000
+        assert jobs[0].salary_max == 120000
+        assert jobs[0].is_remote is True
+
+    def test_run_search_handles_nan_fields(self) -> None:
+        """Real pandas NaN (not string 'nan') produces None for optional fields."""
+        import pandas as pd
+        import numpy as np
+
+        mock_df = pd.DataFrame({
+            "job_url": ["https://example.com/nan-job"],
+            "title": ["Engineer"],
+            "company": [np.nan],
+            "location": [np.nan],
+            "description": ["A real description here"],
+            "is_remote": [False],
+            "min_amount": [np.nan],
+            "max_amount": [np.nan],
+            "date_posted": [np.nan],
+            "site": ["indeed"],
+        })
+
+        discovery = JobSpyDiscovery()
+        config = SearchConfig(query="test", location="", category="tech")
+
+        with patch("seedling.discovery.jobspy.scrape_jobs", return_value=mock_df):
+            jobs = discovery._run_search(config)
+
+        assert len(jobs) == 1
+        assert jobs[0].company is None
+        assert jobs[0].location is None
+        assert jobs[0].salary_min is None
+        assert jobs[0].salary_max is None
+        assert jobs[0].published_at is None

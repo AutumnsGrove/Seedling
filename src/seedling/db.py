@@ -6,7 +6,7 @@ Manages SQLite database for job tracking and history.
 import sqlite3
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Generator, Optional
 
@@ -186,7 +186,7 @@ class Database:
         """
         with self.connect() as conn:
             conn.execute("""
-                INSERT OR REPLACE INTO jobs (
+                INSERT INTO jobs (
                     id, platform, url, url_hash, title, company, location, remote,
                     salary_min, salary_max, salary_text, description, requirements,
                     preferred, category, match_score, score_breakdown, score_summary,
@@ -201,6 +201,30 @@ class Database:
                     :cover_letter_requested, :shutter_pi_detected, :discovered_at,
                     :extracted_at, :scored_at, :emailed_at
                 )
+                ON CONFLICT(url_hash) DO UPDATE SET
+                    title = COALESCE(excluded.title, jobs.title),
+                    company = COALESCE(excluded.company, jobs.company),
+                    location = COALESCE(excluded.location, jobs.location),
+                    remote = excluded.remote,
+                    salary_min = COALESCE(excluded.salary_min, jobs.salary_min),
+                    salary_max = COALESCE(excluded.salary_max, jobs.salary_max),
+                    salary_text = COALESCE(excluded.salary_text, jobs.salary_text),
+                    description = COALESCE(excluded.description, jobs.description),
+                    requirements = COALESCE(excluded.requirements, jobs.requirements),
+                    preferred = COALESCE(excluded.preferred, jobs.preferred),
+                    category = COALESCE(excluded.category, jobs.category),
+                    match_score = COALESCE(excluded.match_score, jobs.match_score),
+                    score_breakdown = COALESCE(excluded.score_breakdown, jobs.score_breakdown),
+                    score_summary = COALESCE(excluded.score_summary, jobs.score_summary),
+                    quick_reject_reason = COALESCE(excluded.quick_reject_reason, jobs.quick_reject_reason),
+                    status = excluded.status,
+                    resume_r2_url = COALESCE(excluded.resume_r2_url, jobs.resume_r2_url),
+                    cover_letter_r2_url = COALESCE(excluded.cover_letter_r2_url, jobs.cover_letter_r2_url),
+                    cover_letter_requested = excluded.cover_letter_requested,
+                    shutter_pi_detected = excluded.shutter_pi_detected,
+                    extracted_at = COALESCE(excluded.extracted_at, jobs.extracted_at),
+                    scored_at = COALESCE(excluded.scored_at, jobs.scored_at),
+                    emailed_at = COALESCE(excluded.emailed_at, jobs.emailed_at)
             """, job.to_dict())
             conn.commit()
 

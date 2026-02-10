@@ -192,8 +192,10 @@ def _parse_shutter_output(url: str, output: dict) -> ExtractedJob:
         ExtractedJob instance.
     """
     # Extract text from Shutter response
-    extracted_text = output.get("text", "")
-    pi_detected = output.get("pi_detected", False)
+    # Shutter returns "extracted" (not "text") and nested "prompt_injection" object
+    extracted_text = output.get("extracted", "")
+    pi_info = output.get("prompt_injection", {})
+    pi_detected = pi_info.get("detected", False) if isinstance(pi_info, dict) else False
 
     # Try to parse structured fields from the text
     # Shutter returns plain text, we need to parse it

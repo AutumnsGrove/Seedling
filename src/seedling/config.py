@@ -8,7 +8,6 @@ Priority:
 """
 
 import json
-import os
 from pathlib import Path
 from typing import Any, TypedDict
 
@@ -19,12 +18,11 @@ class Secrets(TypedDict):
     OPENROUTER_API_KEY: str
     EXA_API_KEY: str
     TAVILY_API_KEY: str
-    JSEARCH_API_KEY: str
     R2_ACCOUNT_ID: str
     R2_ACCESS_KEY_ID: str
     R2_SECRET_ACCESS_KEY: str
     R2_BUCKET: str
-    R2_WORKER_URL: str
+    R2_PUBLIC_URL: str
     ZEPHYR_URL: str
     ZEPHYR_API_KEY: str
     SEEDLING_EMAIL: str
@@ -96,7 +94,6 @@ class Config:
         # Validate required keys
         required_keys = [
             "OPENROUTER_API_KEY",
-            "JSEARCH_API_KEY",
             "R2_ACCOUNT_ID",
             "R2_ACCESS_KEY_ID",
             "R2_SECRET_ACCESS_KEY",
@@ -112,14 +109,13 @@ class Config:
 
         self._secrets = Secrets(
             OPENROUTER_API_KEY=secrets["OPENROUTER_API_KEY"],
-            JSEARCH_API_KEY=secrets["JSEARCH_API_KEY"],
             EXA_API_KEY=secrets.get("EXA_API_KEY", ""),
             TAVILY_API_KEY=secrets.get("TAVILY_API_KEY", ""),
             R2_ACCOUNT_ID=secrets["R2_ACCOUNT_ID"],
             R2_ACCESS_KEY_ID=secrets["R2_ACCESS_KEY_ID"],
             R2_SECRET_ACCESS_KEY=secrets["R2_SECRET_ACCESS_KEY"],
             R2_BUCKET=secrets["R2_BUCKET"],
-            R2_WORKER_URL=secrets.get("R2_WORKER_URL", ""),
+            R2_PUBLIC_URL=secrets.get("R2_PUBLIC_URL", ""),
             ZEPHYR_URL=secrets["ZEPHYR_URL"],
             ZEPHYR_API_KEY=secrets["ZEPHYR_API_KEY"],
             SEEDLING_EMAIL=secrets["SEEDLING_EMAIL"],

@@ -50,9 +50,9 @@ The previous design used Cloudflare Workers, Durable Objects, Browser Rendering,
 ┌─────────────┐     ┌─────────────┐     ┌──────────────┐
 │  Discovery   │────▶│  Extraction  │────▶│   Scoring    │
 │              │     │              │     │              │
-│ Indeed RSS   │     │ Shutter      │     │ Kimi K2.5    │
-│ Web Search   │     │ (UV tool)    │     │ (OpenRouter) │
-│ (Playwright) │     │              │     │              │
+│ JobSpy       │     │ Shutter      │     │ Kimi K2.5    │
+│ (Indeed,     │     │ (UV tool)    │     │ (OpenRouter) │
+│  Google Jobs)│     │              │     │              │
 └─────────────┘     └──────────────┘     └──────┬───────┘
                                                  │
                                                  ▼
@@ -69,7 +69,7 @@ The previous design used Cloudflare Workers, Durable Objects, Browser Rendering,
 
 | Component | Tech | Purpose |
 |-----------|------|---------|
-| **Discovery** | `feedparser` + `httpx` | Parse Indeed RSS, run web searches via Exa/Tavily API |
+| **Discovery** | `python-jobspy` | Scrape Indeed + Google Jobs for listings |
 | **Extraction** | Shutter (local UV tool) | Fetch each listing URL → structured job data |
 | **Scoring** | Kimi K2.5 via OpenRouter | Two-pass: quick reject → detailed scoring |
 | **Tailoring** | Kimi K2.5 + Playwright | Generate tailored content → inject into HTML template → `page.pdf()` |
@@ -766,4 +766,47 @@ Install: `cp place.grove.seedling.plist ~/Library/LaunchAgents/ && launchctl loa
 
 ---
 
-*Last updated: February 8, 2026*
+## Research Findings (v1 Rebuild)
+
+### What Works
+| Source | Method | Status |
+|--------|--------|--------|
+| **JobSpy** (python-jobspy) | Scrapes Indeed, Google Jobs, LinkedIn, Glassdoor, ZipRecruiter | **v1 — Primary** |
+| **Adzuna API** | Free API, 16 countries, good for remote jobs | v2 planned |
+| **The Muse** | Free API, company profiles + jobs | v2 planned |
+| **Remotive** | Free API, remote-only jobs | v2 planned |
+| **Jobicy** | Free API, remote jobs | v2 planned |
+| **USAJOBS** | Free API, federal government jobs | v2 planned |
+| **MCP Servers** | Indeed MCP, Dice MCP for agentic workflows | v3 planned |
+
+### What Doesn't Work
+| Source | Problem |
+|--------|---------|
+| Indeed RSS | Deprecated/blocked — returns empty feeds or 403 |
+| Direct scraping | Indeed, LinkedIn, Glassdoor all block with bot protection |
+| JSearch (RapidAPI) | Expensive at scale ($0.01/request), free tier too limited |
+| Tavily extract | Can't extract through bot protection on job sites |
+
+### Actual Shutter Output Format
+Shutter returns JSON with `extracted` (not `text`) and nested `prompt_injection` object:
+```json
+{
+  "extracted": "the content...",
+  "prompt_injection": {
+    "detected": false,
+    "details": null
+  }
+}
+```
+
+## Discovery Roadmap
+
+| Version | Source | Notes |
+|---------|--------|-------|
+| **v1** | python-jobspy | Indeed, Google Jobs via scraping library |
+| **v2** | Free APIs (Adzuna, The Muse, Remotive, Jobicy) | Expand coverage |
+| **v3** | MCP Servers (Indeed MCP, Dice MCP) | Agentic integration |
+
+---
+
+*Last updated: February 9, 2026*
