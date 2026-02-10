@@ -67,6 +67,26 @@ class TestJobScorer:
         assert "empty" in reason.lower()
 
     @pytest.mark.asyncio
+    async def test_quick_reject_empty_string(self, scorer, mock_openai_response) -> None:
+        """LLM returns empty string — explicit rejection instead of 'Unknown reason'."""
+        s, mock_client = scorer
+        mock_client.chat.completions.create.return_value = mock_openai_response("")
+
+        passed, reason = await s.quick_reject("Some job")
+        assert passed is False
+        assert "empty" in reason.lower()
+
+    @pytest.mark.asyncio
+    async def test_quick_reject_whitespace_only(self, scorer, mock_openai_response) -> None:
+        """LLM returns only whitespace — treated as empty."""
+        s, mock_client = scorer
+        mock_client.chat.completions.create.return_value = mock_openai_response("   \n  ")
+
+        passed, reason = await s.quick_reject("Some job")
+        assert passed is False
+        assert "empty" in reason.lower()
+
+    @pytest.mark.asyncio
     async def test_score_tech_job_success(self, scorer, mock_openai_response) -> None:
         """Test scoring a tech job successfully."""
         s, mock_client = scorer
@@ -164,5 +184,5 @@ class TestJobScorer:
         await s.quick_reject("Some job")
 
         call_kwargs = mock_client.chat.completions.create.call_args
-        assert call_kwargs.kwargs["model"] == "moonshotai/kimi-k2.5"
+        assert call_kwargs.kwargs["model"] == "deepseek/deepseek-v3.2"
         assert call_kwargs.kwargs["temperature"] == 0.1

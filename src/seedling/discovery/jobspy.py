@@ -7,6 +7,7 @@ JobSpy is synchronous, so we wrap in asyncio.to_thread() for async compatibility
 import asyncio
 import hashlib
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -141,6 +142,27 @@ SERVING_SEARCHES = [
 ]
 
 
+_AGGREGATOR_PATTERN = re.compile(
+    r"\d[\d,.*+]*\s+.*\bjobs?\b", re.IGNORECASE
+)
+
+
+def _is_junk_listing(
+    title: str,
+    company: str | None,
+    location: str | None,
+    description: str,
+) -> bool:
+    """Return True if the listing is junk (aggregator page, incomplete, etc.)."""
+    if _AGGREGATOR_PATTERN.search(title):
+        return True
+    if not company and not location:
+        return True
+    if len(description) < 50:
+        return True
+    return False
+
+
 class JobSpyDiscovery:
     """Discovers jobs using python-jobspy."""
 
@@ -236,6 +258,10 @@ class JobSpyDiscovery:
                 site = str(row.get("site", "")) if row.get("site") is not None else None
                 if site == "nan":
                     site = None
+
+                if _is_junk_listing(title, company, location, description):
+                    logger.debug(f"Filtered junk listing: {title!r}")
+                    continue
 
                 jobs.append(DiscoveredJob(
                     platform=site or "jobspy",

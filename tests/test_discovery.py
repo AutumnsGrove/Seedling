@@ -5,7 +5,7 @@ from unittest.mock import patch
 import pytest
 
 from seedling.discovery import DiscoveredJob, generate_url_hash
-from seedling.discovery.jobspy import JobSpyDiscovery, SearchConfig
+from seedling.discovery.jobspy import JobSpyDiscovery, SearchConfig, _is_junk_listing
 
 
 class TestGenerateUrlHash:
@@ -127,9 +127,9 @@ class TestJobSpyDiscovery:
         mock_df = pd.DataFrame({
             "job_url": ["https://example.com/nan-job"],
             "title": ["Engineer"],
-            "company": [np.nan],
+            "company": ["Acme Corp"],
             "location": [np.nan],
-            "description": ["A real description here"],
+            "description": ["A real description that is long enough to pass the junk filter threshold easily"],
             "is_remote": [False],
             "min_amount": [np.nan],
             "max_amount": [np.nan],
@@ -144,8 +144,104 @@ class TestJobSpyDiscovery:
             jobs = discovery._run_search(config)
 
         assert len(jobs) == 1
-        assert jobs[0].company is None
+        assert jobs[0].company == "Acme Corp"
         assert jobs[0].location is None
         assert jobs[0].salary_min is None
         assert jobs[0].salary_max is None
         assert jobs[0].published_at is None
+
+
+class TestJunkListingFilter:
+    """Tests for _is_junk_listing filter."""
+
+    def test_aggregator_page_title(self) -> None:
+        """Titles like '2,000+ Cyber Security jobs' are junk."""
+        assert _is_junk_listing(
+            "2,000+ Cyber Security Entry Level jobs in United States (125 new)",
+            "Some Company",
+            "Remote",
+            "A" * 100,
+        )
+
+    def test_numeric_jobs_title_variants(self) -> None:
+        """Various aggregator title patterns."""
+        assert _is_junk_listing("150 Python Developer jobs", "Co", "NYC", "A" * 100)
+        assert _is_junk_listing("1,234 Security Analyst Jobs in Atlanta", "Co", "ATL", "A" * 100)
+        assert _is_junk_listing("50+ DevOps jobs near me", "Co", "Remote", "A" * 100)
+
+    def test_no_company_and_no_location(self) -> None:
+        """Missing both company and location is junk."""
+        assert _is_junk_listing("Software Engineer", None, None, "A" * 100)
+        assert _is_junk_listing("Software Engineer", "", "", "A" * 100)
+
+    def test_short_description(self) -> None:
+        """Very short descriptions are junk."""
+        assert _is_junk_listing("Software Engineer", "Acme", "Remote", "Apply now")
+
+    def test_real_listing_passes(self) -> None:
+        """A real job listing should not be filtered."""
+        assert not _is_junk_listing(
+            "Junior Software Engineer",
+            "Acme Corp",
+            "Atlanta, GA",
+            "We are looking for a junior software engineer to join our team. "
+            "Requirements: Python, JavaScript, SQL. Remote-friendly position.",
+        )
+
+    def test_company_only_passes(self) -> None:
+        """Having company but no location is fine."""
+        assert not _is_junk_listing(
+            "DevOps Engineer",
+            "TechCo",
+            None,
+            "A" * 100,
+        )
+
+    def test_location_only_passes(self) -> None:
+        """Having location but no company is fine."""
+        assert not _is_junk_listing(
+            "Server",
+            None,
+            "Atlanta, GA",
+            "A" * 100,
+        )
+
+    def test_run_search_filters_junk(self) -> None:
+        """Integration: _run_search drops junk listings from results."""
+        import pandas as pd
+
+        mock_df = pd.DataFrame({
+            "job_url": [
+                "https://example.com/job1",
+                "https://example.com/aggregator",
+                "https://example.com/job3",
+            ],
+            "title": [
+                "Junior DevOps Engineer",
+                "2,000+ Cyber Security Entry Level jobs in United States",
+                "Python Developer",
+            ],
+            "company": ["Acme", None, "TechCo"],
+            "location": ["Remote", None, "Atlanta"],
+            "description": ["A" * 100, "Short", "B" * 100],
+            "is_remote": [True, False, False],
+            "min_amount": [None, None, None],
+            "max_amount": [None, None, None],
+            "date_posted": [None, None, None],
+            "site": ["indeed", "indeed", "google"],
+        })
+
+        discovery = JobSpyDiscovery(
+            tech_searches=[SearchConfig(query="test", location="", category="tech")],
+            serving_searches=[],
+        )
+
+        with patch("seedling.discovery.jobspy.scrape_jobs", return_value=mock_df):
+            jobs = discovery._run_search(
+                SearchConfig(query="test", location="", category="tech")
+            )
+
+        assert len(jobs) == 2
+        titles = [j.title for j in jobs]
+        assert "Junior DevOps Engineer" in titles
+        assert "Python Developer" in titles

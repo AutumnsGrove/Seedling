@@ -1,4 +1,4 @@
-"""Scoring module using OpenRouter/Kimi K2.5.
+"""Scoring module using OpenRouter/DeepSeek V3.2.
 
 Two-pass scoring:
 1. Quick reject (cheap, catches obvious mismatches)
@@ -124,12 +124,12 @@ Respond with EXACTLY one JSON object, no other text:
 
 
 class JobScorer:
-    """Scores job listings using OpenRouter/Kimi K2.5."""
+    """Scores job listings using OpenRouter/DeepSeek V3.2."""
 
     def __init__(
         self,
         api_key: str,
-        model: str = "moonshotai/kimi-k2.5",
+        model: str = "deepseek/deepseek-v3.2",
         http_client=None,
     ) -> None:
         """Initialize the job scorer.
@@ -173,6 +173,9 @@ class JobScorer:
             logging.warning("quick_reject: LLM returned None content")
             return False, "LLM returned empty response"
         content = raw_content.strip()
+        if not content:
+            logging.warning("quick_reject: LLM returned empty string")
+            return False, "LLM returned empty response"
 
         if content.startswith("PASS"):
             return True, None
@@ -347,7 +350,7 @@ async def score_job(
     job_description: str,
     api_key: str,
     category: str = "tech-devops",
-    model: str = "moonshotai/kimi-k2.5",
+    model: str = "deepseek/deepseek-v3.2",
 ) -> ScoredJob:
     """Score a single job.
 
@@ -369,7 +372,7 @@ async def score_job(
 async def quick_reject_job(
     job_description: str,
     api_key: str,
-    model: str = "moonshotai/kimi-k2.5",
+    model: str = "deepseek/deepseek-v3.2",
 ) -> tuple[bool, Optional[str]]:
     """Quick reject a job.
 
